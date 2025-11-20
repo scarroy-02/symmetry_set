@@ -63,11 +63,9 @@ public:
     }
     
     TangentNormalResult computeTangentNormal(double t, double dt = 1e-5) const {
-        // Numerical derivatives
         double dx_dt = (x_func(t + dt) - x_func(t - dt)) / (2.0 * dt);
         double dy_dt = (y_func(t + dt) - y_func(t - dt)) / (2.0 * dt);
-        
-        // Tangent vector
+
         Point tangent(dx_dt, dy_dt);
         double tangent_norm = tangent.norm();
         
@@ -77,10 +75,8 @@ public:
         
         Point tangent_unit = tangent.normalize();
         
-        // Normal vector (rotate tangent by +pi/2 counterclockwise)
         Point normal_unit(-tangent_unit.y, tangent_unit.x);
         
-        // Point on curve
         Point point = evaluate(t);
         
         return TangentNormalResult(point, tangent_unit, normal_unit);
@@ -294,15 +290,6 @@ int main() {
     saveToCsv("symmetry_focal_set.csv", curve_points, symmetry_centers, focal_points);
     std::cout << "Done! Found " << focal_points.size() << " focal set points." << std::endl;
     std::cout << "Done! Found " << symmetry_centers.size() << " symmetry set points." << std::endl;
-    
-    // Print some example points
-    if (symmetry_centers.size() > 0) {
-        std::cout << "\nFirst 5 symmetry set points:" << std::endl;
-        for (size_t i = 0; i < std::min(size_t(5), symmetry_centers.size()); i++) {
-            std::cout << "  (" << symmetry_centers[i].x << ", " 
-                      << symmetry_centers[i].y << ")" << std::endl;
-        }
-    }
     
     return 0;
 }
