@@ -283,7 +283,7 @@ int main() {
     }
 
     std::cout << "Computing focal set..." << std::endl;
-    double R_max = 500.0;
+    double R_max = 50000.0;
     std::vector<Point> focal_points = computeFocalSet(curve, resolution, R_max);
     
     // Save to CSV

@@ -85,14 +85,17 @@ public:
         return points[i];
     }
 
-    TangentNormalResult computeTangentNormal(int i) const {
-        if (i <= 0 || i >= points.size() - 1) return TangentNormalResult();
+    // --- MODIFIED: Added 'stride' ---
+    TangentNormalResult computeTangentNormal(int i, int stride = 50) const {
+        // Bounds check with stride
+        if (i < stride || i >= points.size() - stride) return TangentNormalResult();
 
-        Point p_prev = points[i - 1];
-        Point p_next = points[i + 1];
+        // Look 'stride' points backward and forward
+        Point p_prev = points[i - stride];
+        Point p_next = points[i + stride];
         Point p_curr = points[i];
 
-        Point tangent = p_next - p_prev; 
+        Point tangent = p_next - p_prev;
         
         if (tangent.norm() < 1e-10) return TangentNormalResult();
         
@@ -102,37 +105,58 @@ public:
         return TangentNormalResult(p_curr, t_unit, n_unit);
     }
 
-    double computeCurvature(int i) const {
-        if (i <= 0 || i >= points.size() - 1) return 0.0;
+    // --- MODIFIED: Added 'stride' ---
+    double computeCurvature(int i, int stride = 50) const {
+        if (i < stride || i >= points.size() - stride) return 0.0;
 
-        Point p_prev = points[i - 1];
+        // Use neighbors far away to smooth out noise
+        Point p_prev = points[i - stride];
         Point p_curr = points[i];
-        Point p_next = points[i + 1];
+        Point p_next = points[i + stride];
 
+        // Velocity (1st derivative)
         Point v = (p_next - p_prev) * 0.5;
-
+        
+        // Acceleration (2nd derivative)
         Point a = (p_next - (p_curr * 2.0)) + p_prev;
 
         double numerator = v.x * a.y - v.y * a.x;
         double denom = std::pow(v.x * v.x + v.y * v.y, 1.5);
 
-        if (std::abs(denom) < 1e-10) return 0.0;
+        if (std::abs(denom) < 1e-20) return 0.0; // Avoid division by super-small number
         
         return numerator / denom;
     }
 
     Point computeFocalPoint(int i, double R_max = 10.0) const {
-        TangentNormalResult tn = computeTangentNormal(i);
+        // --- CRITICAL FIX: Use Stride ---
+        // For 100k points, a stride of 100 is safe (looks ~300 points wide)
+        int stride = 100; 
+
+        TangentNormalResult tn = computeTangentNormal(i, stride);
         if (!tn.valid) return Point(NAN, NAN);
         
-        double kappa = computeCurvature(i);
-        if (std::abs(kappa) < 1e-5) return Point(NAN, NAN); // Flat line
+        // Note: computeCurvature logic assumes dt=1, but with stride, dt=stride.
+        // However, since we want Radius R = 1/k, and the formula k has units 1/Length,
+        // the standard discrete formula works regardless of stride IF vectors are raw differences.
+        // But to be precise, the discrete formula k = (x'y''...)/... is geometric and scale-invariant 
+        // regarding the parameter 't', so we don't need to divide by stride manually 
+        // IF we treat the stride step as the unit step.
+        
+        double kappa = computeCurvature(i, stride);
+        
+        // Threshold: If stride is large, kappa won't be microscopic noise anymore.
+        // But straight lines will still be near 0.
+        if (std::abs(kappa) < 1e-8) return Point(NAN, NAN); 
         
         double R = 1.0 / kappa;
         
-        // infinite curvature or flat spots
+        // Filter out straight sections (infinite radius)
         if (std::abs(R) > R_max) return Point(NAN, NAN); 
         
+        // Filter out sharp noise (microscopic radius)
+        if (std::abs(R) < 0.01) return Point(NAN, NAN);
+
         return tn.point + tn.normal * R;
     }
 };
@@ -240,7 +264,7 @@ void saveToCsv(const std::string& filename,
 }
 
 int main() {
-    std::string input_file = "monodromyfig4_points.csv";
+    std::string input_file = "spiral_v5.csv";
     std::cout << "Loading points from " << input_file << "..." << std::endl;
     
     std::vector<Point> points = loadPointsFromCsv(input_file);
@@ -255,13 +279,13 @@ int main() {
     DiscreteCurve curve(points);
     
     std::cout << "Computing focal set..." << std::endl;
-    std::vector<Point> focal_points = computeFocalSet(curve, 5000.0); // R_max
+    std::vector<Point> focal_points = computeFocalSet(curve, 1e1000); // R_max
     
     std::cout << "Computing symmetry set ..." << std::endl;
-    std::vector<Point> symmetry_centers = computeSymmetrySet(curve, 10); // lambda_max
+    std::vector<Point> symmetry_centers = computeSymmetrySet(curve, 50); // lambda_max
     
     // Save output
-    std::string output_file = "monodromyfig4_symm.csv";
+    std::string output_file = "spiral_v6_symm.csv";
     saveToCsv(output_file, symmetry_centers, focal_points);
     
     std::cout << "Done!" << std::endl;
