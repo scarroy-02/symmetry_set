@@ -259,19 +259,19 @@ int main() {
     const double PI = 3.14159265358979323846;
     
     // Define the ellipse curve
-    double a = 1.5;
-    double b = 1;
-    double H = 1.2;
-    double q = 20.0;
-    auto x_func = [a](double t) { return a * std::sin(t); };
-    auto y_func = [H,q,b](double t) { return (b * (std::cos(t) - 1) - H * (std::exp( - q * pow(t,2)))); };
+    double a = -0.55;
+    double b = 0.6;
+    // x[t_] := Cos[t] (1 + -0.55 Exp[-20 (t - 2)^2] + 0.6 Exp[-70 (t - 2.4)^2]);
+    // y[t_] := 1.8 Sin[t] (1 + -0.55 Exp[-20 (t - 2)^2] + 0.6 Exp[-70 (t - 2.4)^2]);
+    auto x_func = [a,b](double t) { return std::cos(t) * (1 + a * std::exp(-20 * pow((t - 2),2)) + b * std::exp(-70 * pow((t - 2.4),2))); };
+    auto y_func = [a,b](double t) { return 1.8 * std::sin(t) * (1 + a * std::exp(-20 * pow((t - 2),2)) + b * std::exp(-70 * pow((t - 2.4),2))); };
     
     ParametricCurve curve(x_func, y_func, - PI, PI);
     
     // Compute symmetry set
     std::cout << "Computing symmetry set..." << std::endl;
-    int resolution = 800;
-    double lambda_max = 3.0;
+    int resolution = 200000;
+    double lambda_max = 10.0;
     std::vector<Point> symmetry_centers = computeSymmetrySet(curve, resolution, lambda_max);
     
     // Generate curve points for plotting
@@ -283,11 +283,11 @@ int main() {
     }
 
     std::cout << "Computing focal set..." << std::endl;
-    double R_max = 3.0;
+    double R_max = 500.0;
     std::vector<Point> focal_points = computeFocalSet(curve, resolution, R_max);
     
     // Save to CSV
-    saveToCsv("symmetry_focal_set.csv", curve_points, symmetry_centers, focal_points);
+    saveToCsv("monodromyfig4_v3.csv", curve_points, symmetry_centers, focal_points);
     std::cout << "Done! Found " << focal_points.size() << " focal set points." << std::endl;
     std::cout << "Done! Found " << symmetry_centers.size() << " symmetry set points." << std::endl;
     

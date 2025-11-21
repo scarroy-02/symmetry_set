@@ -233,14 +233,14 @@ void saveToCsv(const std::string& filename,
     std::ofstream file(filename);
     if (!file.is_open()) return;
     
-    file << "type,x,y\n";
+    file << "Type,X,Y\n";
     for (const auto& p : symmetry_points) file << "symmetry," << p.x << "," << p.y << "\n";
     for (const auto& p : focal_points) file << "focal," << p.x << "," << p.y << "\n";
     file.close();
 }
 
 int main() {
-    std::string input_file = "spiral_points.csv";
+    std::string input_file = "monodromyfig4_points.csv";
     std::cout << "Loading points from " << input_file << "..." << std::endl;
     
     std::vector<Point> points = loadPointsFromCsv(input_file);
@@ -255,13 +255,13 @@ int main() {
     DiscreteCurve curve(points);
     
     std::cout << "Computing focal set..." << std::endl;
-    std::vector<Point> focal_points = computeFocalSet(curve, 50.0); // R_max
+    std::vector<Point> focal_points = computeFocalSet(curve, 5000.0); // R_max
     
     std::cout << "Computing symmetry set ..." << std::endl;
     std::vector<Point> symmetry_centers = computeSymmetrySet(curve, 10); // lambda_max
     
     // Save output
-    std::string output_file = "analysis_output.csv";
+    std::string output_file = "monodromyfig4_symm.csv";
     saveToCsv(output_file, symmetry_centers, focal_points);
     
     std::cout << "Done!" << std::endl;
