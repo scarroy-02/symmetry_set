@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deformed Ellipse Symmetry Set</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; color: #eee; font-family: sans-serif; }
+        canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+        canvas:active { cursor: grabbing; }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 8px;
+            width: 340px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            pointer-events: auto;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .slider-container { margin-bottom: 15px; }
+        label { display: block; font-size: 0.85rem; margin-bottom: 5px; color: #ccc; font-weight: bold; }
+        input[type="range"] { width: 100%; cursor: pointer; accent-color: #60a5fa; }
+        .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 0.8rem; margin-top: 15px; border-top: 1px solid #444; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        #status { font-size: 0.8rem; color: #fbbf24; min-height: 1.2em; margin-bottom: 10px; font-weight: bold; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Scrollbar styling for controls */
+        .controls::-webkit-scrollbar { width: 6px; }
+        .controls::-webkit-scrollbar-track { background: #222; }
+        .controls::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <h2 class="text-xl font-bold mb-2 text-white">Deformed Ellipse</h2>
+        <div id="status">Ready</div>
+        
+        <div class="slider-container">
+            <label for="progress">Deformation</label>
+            <input type="range" id="progress" min="0" max="1" step="0.001" value="0">
+            <div class="flex justify-between text-xs text-gray-400 mt-1">
+                <span>Ellipse</span>
+                <span>Deformed</span>
+            </div>
+        </div>
+
+        <div class="slider-container">
+            <label for="resolution">Resolution</label>
+            <input type="range" id="resolution" min="500" max="50000" step="100" value="1000">
+            <div id="res-val" class="text-xs text-right text-gray-400">1000</div>
+        </div>
+
+        <div class="flex gap-2 mt-4">
+            <button id="computeBtn" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm w-full font-bold transition">Re-Compute</button>
+        </div>
+
+        <div class="mt-4 border-t border-gray-600 pt-3 space-y-2">
+            <div class="flex items-center justify-between">
+                <span class="text-xs">Show Curve</span>
+                <input type="checkbox" id="showCurve" checked>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-xs">Show Focal Set</span>
+                <input type="checkbox" id="showEvolute" checked>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-xs">Show Symmetry Set</span>
+                <input type="checkbox" id="showSS" checked>
+            </div>
+        </div>
+
+        <div class="flex gap-2 mt-4 border-t border-gray-600 pt-3">
+             <button id="resetViewBtn" class="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm w-full transition">Reset View</button>
+        </div>
+
+        <div class="legend">
+            <div class="flex items-center gap-1"><span class="dot bg-blue-400"></span> Curve</div>
+            <div class="flex items-center gap-1"><span class="dot bg-green-400"></span> Focal Set</div>
+            <div class="flex items-center gap-1"><span class="dot bg-red-500"></span> Symmetry Set</div>
+        </div>
+        
+        <div class="text-[10px] text-gray-500 mt-4 italic text-center">
+            Scroll to Zoom • Drag to Pan
+        </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+<script>
+
+class Point {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+    add(other) { return new Point(this.x + other.x, this.y + other.y); }
+    sub(other) { return new Point(this.x - other.x, this.y - other.y); }
+    mult(scalar) { return new Point(this.x * scalar, this.y * scalar); }
+    dot(other) { return this.x * other.x + this.y * other.y; }
+    norm() { return Math.sqrt(this.x * this.x + this.y * this.y); }
+    normalize() {
+        const n = this.norm();
+        if (n < 1e-10) return new Point(0, 0);
+        return new Point(this.x / n, this.y / n);
+    }
+}
+
+const TARGET_A = -0.55;
+const TARGET_B = 0.6;
+const Y_SCALE = 1.8;
+const LAMBDA_MAX = 10.0;
+const R_MAX = 50000.0;
+
+let currentA = 0;
+let currentB = 0;
+let ssResolution = 1000;
+let cachedCurveData = null;
+let cachedSSData = null;
+
+// Viewport State
+let view = {
+    x: 0,
+    y: 0,
+    scale: 100, // pixels per unit
+    isDragging: false,
+    lastX: 0,
+    lastY: 0
+};
+
+// --- Curve Definition ---
+
+function getCurvePoint(t, a, b) {
+    // x[t_] := Cos[t] (1 + a Exp[-20 (t - 2)^2] + b Exp[-70 (t - 2.4)^2])
+    const term1 = a * Math.exp(-20 * Math.pow(t - 2, 2));
+    const term2 = b * Math.exp(-70 * Math.pow(t - 2.4, 2));
+    const shapeFactor = 1 + term1 + term2;
+
+    const x = Math.cos(t) * shapeFactor;
+    const y = Y_SCALE * Math.sin(t) * shapeFactor;
+    return new Point(x, y);
+}
+
+// Compute points, derivatives, normals, curvature
+function computeFrameData(resolution, a, b) {
+    const tMin = -Math.PI;
+    const tMax = Math.PI;
+    const dt = (tMax - tMin) / resolution;
+    
+    const data = [];
+
+    // 1. Points
+    for (let i = 0; i <= resolution; i++) {
+        const t = tMin + i * dt;
+        data.push({ t: t, p: getCurvePoint(t, a, b) });
+    }
+
+    // 2. Derivatives & Curvature
+    for (let i = 0; i < data.length; i++) {
+        const prev = data[i === 0 ? data.length - 2 : i - 1]; 
+        const next = data[i === data.length - 1 ? 1 : i + 1];
+        
+        const dx = (next.p.x - prev.p.x); 
+        const dy = (next.p.y - prev.p.y);
+        
+        let T = new Point(dx, dy).normalize();
+        let N = new Point(-T.y, T.x);
+
+        data[i].T = T;
+        data[i].N = N;
+        
+        const real_dt = (next.t - prev.t);
+        const vx = dx / real_dt;
+        const vy = dy / real_dt;
+        
+        const ddx = (next.p.x - 2 * data[i].p.x + prev.p.x);
+        const ddy = (next.p.y - 2 * data[i].p.y + prev.p.y);
+        
+        const ax = ddx / (dt * dt);
+        const ay = ddy / (dt * dt);
+
+        const num = vx * ay - vy * ax;
+        const den = Math.pow(vx * vx + vy * vy, 1.5);
+        
+        let curvature = 0;
+        if (Math.abs(den) > 1e-10) curvature = num / den;
+        
+        data[i].curvature = curvature;
+    }
+    
+    return data;
+}
+
+function computeSymmetrySet(data) {
+    const centers = [];
+    const thresholdIdx = 5; 
+
+    const len = data.length;
+    
+    const P = new Float64Array(len * 2);
+    const T = new Float64Array(len * 2);
+    const N = new Float64Array(len * 2);
+
+    for(let i=0; i<len; i++) {
+        P[i*2] = data[i].p.x; P[i*2+1] = data[i].p.y;
+        T[i*2] = data[i].T.x; T[i*2+1] = data[i].T.y;
+        N[i*2] = data[i].N.x; N[i*2+1] = data[i].N.y;
+    }
+
+    for (let i = 0; i < len; i++) {
+        const px = P[i*2], py = P[i*2+1];
+        const tx = T[i*2], ty = T[i*2+1];
+        const nx = N[i*2], ny = N[i*2+1];
+
+        let prev_check1 = NaN;
+        let prev_check2 = NaN;
+        let prev_j = -1;
+
+        for (let j = i + thresholdIdx; j < len; j++) {
+            const p2x = P[j*2], p2y = P[j*2+1];
+            const t2x = T[j*2], t2y = T[j*2+1];
+            
+            const dotT = tx*t2x + ty*t2y;
+            if (Math.abs(dotT) > 0.999999999) {
+                 prev_check1 = NaN; prev_check2 = NaN;
+                 continue;
+            }
+
+            const dx = px - p2x;
+            const dy = py - p2y;
+
+            const eq_check1 = dx * (tx + t2x) + dy * (ty + t2y);
+            const eq_check2 = dx * (tx - t2x) + dy * (ty - t2y);
+
+            if (!isNaN(prev_check1)) {
+                if (prev_check1 * eq_check1 < 0) {
+                    const alpha = Math.abs(prev_check1) / (Math.abs(prev_check1) + Math.abs(eq_check1));
+                    
+                    const prevN2x = N[prev_j*2], prevN2y = N[prev_j*2+1];
+                    const n2x = N[j*2], n2y = N[j*2+1];
+                    
+                    let N_interpX = prevN2x * (1-alpha) + n2x * alpha;
+                    let N_interpY = prevN2y * (1-alpha) + n2y * alpha;
+                    const nNorm = Math.sqrt(N_interpX*N_interpX + N_interpY*N_interpY);
+                    N_interpX /= nNorm; N_interpY /= nNorm;
+
+                    const prevP2x = P[prev_j*2], prevP2y = P[prev_j*2+1];
+                    const P_interpX = prevP2x * (1-alpha) + p2x * alpha;
+                    const P_interpY = prevP2y * (1-alpha) + p2y * alpha;
+
+                    const NsumX = nx + N_interpX;
+                    const NsumY = ny + N_interpY;
+                    const denom = NsumX*NsumX + NsumY*NsumY;
+
+                    if (denom > 1e-10) {
+                        const pdx = P_interpX - px;
+                        const pdy = P_interpY - py;
+                        const lam = (pdx * NsumX + pdy * NsumY) / denom;
+
+                        if (Math.abs(lam) < LAMBDA_MAX) {
+                            centers.push({x: px + nx * lam, y: py + ny * lam});
+                        }
+                    }
+                }
+            }
+
+            if (!isNaN(prev_check2)) {
+                if (prev_check2 * eq_check2 < 0) {
+                    const alpha = Math.abs(prev_check2) / (Math.abs(prev_check2) + Math.abs(eq_check2));
+                    
+                    const prevN2x = N[prev_j*2], prevN2y = N[prev_j*2+1];
+                    const n2x = N[j*2], n2y = N[j*2+1];
+                    
+                    let N_interpX = prevN2x * (1-alpha) + n2x * alpha;
+                    let N_interpY = prevN2y * (1-alpha) + n2y * alpha;
+                    const nNorm = Math.sqrt(N_interpX*N_interpX + N_interpY*N_interpY);
+                    N_interpX /= nNorm; N_interpY /= nNorm;
+
+                    const prevP2x = P[prev_j*2], prevP2y = P[prev_j*2+1];
+                    const P_interpX = prevP2x * (1-alpha) + p2x * alpha;
+                    const P_interpY = prevP2y * (1-alpha) + p2y * alpha;
+
+                    const NsubX = nx - N_interpX;
+                    const NsubY = ny - N_interpY;
+                    const denom = NsubX*NsubX + NsubY*NsubY;
+
+                    if (denom > 1e-8) {
+                        const pdx = P_interpX - px;
+                        const pdy = P_interpY - py;
+                        const lam = (pdx * NsubX + pdy * NsubY) / denom;
+
+                        if (Math.abs(lam) < LAMBDA_MAX) {
+                            centers.push({x: px + nx * lam, y: py + ny * lam});
+                        }
+                    }
+                }
+            }
+
+            prev_check1 = eq_check1;
+            prev_check2 = eq_check2;
+            prev_j = j;
+        }
+    }
+    return centers;
+}
+
+// --- Drawing & UI ---
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const slider = document.getElementById('progress');
+const resSlider = document.getElementById('resolution');
+const resVal = document.getElementById('res-val');
+const statusDiv = document.getElementById('status');
+const computeBtn = document.getElementById('computeBtn');
+const resetViewBtn = document.getElementById('resetViewBtn');
+
+// Interaction Handlers
+canvas.addEventListener('mousedown', e => {
+    view.isDragging = true;
+    view.lastX = e.clientX;
+    view.lastY = e.clientY;
+});
+
+canvas.addEventListener('mousemove', e => {
+    if (view.isDragging) {
+        const dx = e.clientX - view.lastX;
+        const dy = e.clientY - view.lastY;
+        view.x += dx;
+        view.y += dy;
+        view.lastX = e.clientX;
+        view.lastY = e.clientY;
+        draw();
+    }
+});
+
+canvas.addEventListener('mouseup', () => view.isDragging = false);
+canvas.addEventListener('mouseleave', () => view.isDragging = false);
+
+canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const zoomIntensity = 0.1;
+    const factor = Math.exp(e.deltaY > 0 ? -zoomIntensity : zoomIntensity);
+    
+    // Zoom towards mouse pointer
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Convert mouse pos to relative coords from center before zoom
+    const dx = (mouseX - canvas.width / 2 - view.x);
+    const dy = (mouseY - canvas.height / 2 - view.y);
+
+    view.x -= dx * (factor - 1);
+    view.y -= dy * (factor - 1);
+    view.scale *= factor;
+    
+    draw();
+}, { passive: false });
+
+resetViewBtn.addEventListener('click', () => {
+    resetView();
+    draw();
+});
+
+function resetView() {
+    view.x = 0;
+    view.y = 0;
+    view.scale = Math.min(canvas.width, canvas.height) / 8;
+}
+
+resSlider.addEventListener('input', (e) => {
+    ssResolution = parseInt(e.target.value);
+    resVal.innerText = `${ssResolution}`;
+    statusDiv.innerText = "Resolution changed. Press Re-Compute.";
+    statusDiv.style.color = "#fbbf24";
+});
+
+slider.addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    currentA = TARGET_A * val;
+    currentB = TARGET_B * val;
+    cachedCurveData = computeFrameData(20000, currentA, currentB);
+    cachedSSData = null;
+    draw();
+    statusDiv.innerText = "Parameters changed. Release to compute.";
+    statusDiv.style.color = "#fbbf24"; 
+});
+
+slider.addEventListener('change', () => {
+    triggerComputation();
+});
+
+computeBtn.addEventListener('click', triggerComputation);
+
+function triggerComputation() {
+    statusDiv.innerText = `Computing Symmetry Set (${ssResolution} pts)...`;
+    statusDiv.style.color = "#60a5fa"; 
+    
+    setTimeout(() => {
+        const t0 = performance.now();
+        const frameData = computeFrameData(ssResolution, currentA, currentB);
+        cachedCurveData = frameData; 
+        cachedSSData = computeSymmetrySet(frameData);
+        const t1 = performance.now();
+        statusDiv.innerText = `Done in ${(t1-t0).toFixed(0)}ms. Found ${cachedSSData.length} pts.`;
+        statusDiv.style.color = "#4ade80"; 
+        draw();
+    }, 50);
+}
+
+['showCurve', 'showEvolute', 'showSS'].forEach(id => {
+    document.getElementById(id).addEventListener('change', draw);
+});
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if (view.scale === 100) resetView(); // Only reset on first load
+    if (cachedCurveData) draw();
+}
+window.addEventListener('resize', resize);
+
+function draw() {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (!cachedCurveData) return;
+
+    ctx.save();
+    
+    // Apply View Transforms (Pan & Zoom)
+    // 1. Move origin to center of screen + pan offset
+    ctx.translate(canvas.width / 2 + view.x, canvas.height / 2 + view.y);
+    // 2. Scale by zoom level (invert Y for Cartesian coords)
+    ctx.scale(view.scale, -view.scale); 
+
+    // Draw grid lines (helpful for context when zooming)
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1 / view.scale;
+    ctx.beginPath();
+    ctx.moveTo(-100, 0); ctx.lineTo(100, 0);
+    ctx.moveTo(0, -100); ctx.lineTo(0, 100);
+    ctx.stroke();
+
+    if (document.getElementById('showEvolute').checked) {
+        ctx.beginPath();
+        let first = true;
+        for (let i = 0; i < cachedCurveData.length; i++) {
+            const k = cachedCurveData[i].curvature;
+            if (Math.abs(k) > 1e-4) {
+                const R = 1.0 / k;
+                if (Math.abs(R) < R_MAX && Math.abs(R) < 20) { 
+                    const cx = cachedCurveData[i].p.x + cachedCurveData[i].N.x * R;
+                    const cy = cachedCurveData[i].p.y + cachedCurveData[i].N.y * R;
+                    if (first) { ctx.moveTo(cx, cy); first = false; }
+                    else ctx.lineTo(cx, cy);
+                } else {
+                    first = true;
+                }
+            }
+        }
+        ctx.strokeStyle = '#4ade80'; 
+        ctx.lineWidth = 2 / view.scale; // Keep line width constant in screen pixels
+        ctx.stroke();
+    }
+
+    if (document.getElementById('showSS').checked && cachedSSData) {
+        ctx.fillStyle = '#ef4444'; 
+        // Points stay same screen size regardless of zoom
+        const ptSize = 3 / view.scale; 
+        for (let i = 0; i < cachedSSData.length; i++) {
+            const p = cachedSSData[i];
+            ctx.fillRect(p.x - ptSize/2, p.y - ptSize/2, ptSize, ptSize);
+        }
+    }
+
+    if (document.getElementById('showCurve').checked) {
+        ctx.beginPath();
+        ctx.moveTo(cachedCurveData[0].p.x, cachedCurveData[0].p.y);
+        for (let i = 1; i < cachedCurveData.length; i++) {
+            ctx.lineTo(cachedCurveData[i].p.x, cachedCurveData[i].p.y);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = '#60a5fa'; 
+        ctx.lineWidth = 3 / view.scale;
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+resize();
+triggerComputation();
+
+</script>
+</body>
+</html>
